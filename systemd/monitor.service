@@ -1,0 +1,23 @@
+# Native execution, without Docker.
+#   sudo cp systemd/monitor.service /etc/systemd/system/
+#   sudo systemctl enable --now monitor
+[Unit]
+Description=Resource monitor (metric collection + HTTP dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=huso
+WorkingDirectory=/home/huso/Documents/code/monitor
+Environment=MONITOR_HOST=0.0.0.0
+Environment=MONITOR_PORT=8787
+Environment=MONITOR_INTERVAL=10
+Environment=MONITOR_RETENTION_DAYS=14
+Environment=MONITOR_DB=/home/huso/Documents/code/monitor/data/monitor.db
+ExecStart=/usr/bin/python3 -m monitor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

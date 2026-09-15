@@ -1,0 +1,45 @@
+services:
+  monitor:
+    build: .
+    image: ssh-resource-monitor:latest
+    container_name: ssh-resource-monitor
+
+    # Comes up with the Docker daemon, which means on every boot.
+    restart: unless-stopped
+
+    # network_mode host: /proc/net/dev then reports the host's real interfaces,
+    # and the dashboard listens straight on the LAN address.
+    network_mode: host
+    # pid host: CPU and memory accounting cover the whole host.
+    pid: host
+
+    environment:
+      MONITOR_HOST: "0.0.0.0"
+      MONITOR_PORT: "8787"
+      MONITOR_DB: /data/monitor.db
+      MONITOR_INTERVAL: "10"
+      MONITOR_RETENTION_DAYS: "14"
+
+    # Runs as a normal user, not root. Everything the app reads (/proc, /sys,
+    # /dev/nvidia*) is world-readable, and the bind-mounted ./data then belongs
+    # to the same uid. Override if your host user is not 1000.
+    user: "${MONITOR_UID:-1000}:${MONITOR_GID:-1000}"
+
+    volumes:
+      - ./data:/data
+
+    # The app only reads /proc, /sys and /dev/nvidia*, so it needs no capabilities.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Requires the NVIDIA Container Toolkit on the host. Without it, comment this
+    # block out: the app keeps running, just without the GPU metrics.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]

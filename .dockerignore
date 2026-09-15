@@ -1,0 +1,9 @@
+data/
+.git/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.db*
+systemd/
+README.md

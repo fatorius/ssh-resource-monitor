@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resource Monitor</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>📊</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="identity">
+    <h1 id="hostname">—</h1>
+    <p id="subtitle" class="muted">loading…</p>
+  </div>
+  <div class="controls">
+    <span id="status" class="status"><i></i><span id="status-text">connecting</span></span>
+    <div class="ranges" id="ranges" role="group" aria-label="Time window"></div>
+  </div>
+</header>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+  <section class="charts" id="charts"></section>
+</main>
+
+<div id="tooltip" class="tooltip" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
