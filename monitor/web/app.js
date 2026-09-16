@@ -59,6 +59,9 @@ const CHART_DEFS = [
     lines: [{ key: 'net_rx_bps', name: 'Download', color: '--rx' },
             { key: 'net_tx_bps', name: 'Upload', color: '--tx' }] },
   { id: 'disk', title: 'Disk usage', fmt: pct, fixed: [0, 100], disks: true, lines: [] },
+  { id: 'diskio', title: 'Disk throughput', fmt: bps, floor: 0,
+    lines: [{ key: 'disk_read_bps', name: 'Read', color: '--io-read' },
+            { key: 'disk_write_bps', name: 'Write', color: '--io-write' }] },
 ];
 
 /* Per-core and per-disk line colours, derived from hue rotations. */
@@ -325,6 +328,11 @@ function renderKPIs(current) {
       label: 'VRAM', color: '--vram', value: pct(s.vram_pct),
       sub: s.vram_total_mb ? `${s.vram_used_mb.toFixed(0)} of ${s.vram_total_mb.toFixed(0)} MB` : 'no reading',
       meter: { pct: s.vram_pct, color: meterColor(s.vram_pct, 80, 92) || '--vram' },
+    }),
+    kpiCard({
+      label: 'Disk I/O', color: '--io-read',
+      value: `<span style="color:${css('--io-read')}">R</span> ${bps(s.disk_read_bps)}`,
+      sub: `<span style="color:${css('--io-write')}">W</span> ${bps(s.disk_write_bps)} &nbsp;·&nbsp; total ${bytes(s.disk_read_total)} / ${bytes(s.disk_write_total)}`,
     }),
     kpiCard({
       label: 'Network', color: '--rx',

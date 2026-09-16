@@ -131,6 +131,41 @@ def _net_counters() -> tuple[int, int]:
     return sum(c.bytes_recv for c in selected), sum(c.bytes_sent for c in selected)
 
 
+#: Block devices that are not real storage, or that mirror something already
+#: counted.
+_SKIP_DEVICE_PREFIXES = ("loop", "ram", "sr", "fd", "zram")
+
+
+def _whole_disks(names: list[str]) -> list[str]:
+    """Drop partitions, keeping only whole disks.
+
+    A partition's name extends its disk's ("sda2" extends "sda", "nvme0n1p1"
+    extends "nvme0n1"), and the kernel counts its I/O against both, so summing
+    everything would double it.
+    """
+    candidates = [n for n in names if not n.startswith(_SKIP_DEVICE_PREFIXES)]
+    return [
+        name for name in candidates
+        if not any(other != name and name.startswith(other) for other in candidates)
+    ]
+
+
+def _disk_io_counters() -> tuple[int, int]:
+    """Bytes read and written, summed over the monitored block devices."""
+    counters = psutil.disk_io_counters(perdisk=True)
+    if not counters:
+        return 0, 0
+    if config.DISK_DEVICES:
+        selected = [v for k, v in counters.items() if k in config.DISK_DEVICES]
+    else:
+        wanted = set(_whole_disks(list(counters)))
+        selected = [v for k, v in counters.items() if k in wanted]
+    return (
+        sum(c.read_bytes for c in selected),
+        sum(c.write_bytes for c in selected),
+    )
+
+
 class Sampler:
     """Produces samples, holding the state the rate calculations need."""
 
@@ -139,20 +174,26 @@ class Sampler:
         # only establishes the baseline.
         psutil.cpu_percent(interval=None)
         self._prev_net = _net_counters()
+        self._prev_disk_io = _disk_io_counters()
         self._prev_time = time.monotonic()
 
     def sample(self) -> dict:
         now_mono = time.monotonic()
         rx_total, tx_total = _net_counters()
+        read_total, write_total = _disk_io_counters()
         elapsed = now_mono - self._prev_time
         if elapsed > 0:
             prev_rx, prev_tx = self._prev_net
-            # max(0, ...) guards against an interface counter reset.
+            prev_read, prev_write = self._prev_disk_io
+            # max(0, ...) guards against a counter reset.
             rx_bps = max(0.0, (rx_total - prev_rx) / elapsed)
             tx_bps = max(0.0, (tx_total - prev_tx) / elapsed)
+            read_bps = max(0.0, (read_total - prev_read) / elapsed)
+            write_bps = max(0.0, (write_total - prev_write) / elapsed)
         else:
-            rx_bps = tx_bps = 0.0
+            rx_bps = tx_bps = read_bps = write_bps = 0.0
         self._prev_net = (rx_total, tx_total)
+        self._prev_disk_io = (read_total, write_total)
         self._prev_time = now_mono
 
         memory = psutil.virtual_memory()
@@ -170,6 +211,10 @@ class Sampler:
             "net_tx_bps": tx_bps,
             "net_rx_total": rx_total,
             "net_tx_total": tx_total,
+            "disk_read_bps": read_bps,
+            "disk_write_bps": write_bps,
+            "disk_read_total": read_total,
+            "disk_write_total": write_total,
             "disks": read_disks(),
             **read_gpu(),
         }

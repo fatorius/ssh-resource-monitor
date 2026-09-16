@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS samples (
     net_rx_bps      REAL,
     net_tx_bps      REAL,
     net_rx_total    INTEGER,
-    net_tx_total    INTEGER
+    net_tx_total    INTEGER,
+    disk_read_bps   REAL,
+    disk_write_bps  REAL,
+    disk_read_total INTEGER,
+    disk_write_total INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS core_temps (
@@ -55,6 +59,18 @@ SERIES_COLUMNS = (
     "vram_pct",
     "net_rx_bps",
     "net_tx_bps",
+    "disk_read_bps",
+    "disk_write_bps",
+)
+
+#: Columns added after the first release. A database created by an older
+#: version keeps its rows; ALTER TABLE fills the gap, since CREATE TABLE IF NOT
+#: EXISTS leaves an existing table untouched.
+_ADDED_COLUMNS = (
+    ("disk_read_bps", "REAL"),
+    ("disk_write_bps", "REAL"),
+    ("disk_read_total", "INTEGER"),
+    ("disk_write_total", "INTEGER"),
 )
 
 
@@ -76,6 +92,10 @@ def init() -> None:
     conn = connect()
     with conn:
         conn.executescript(SCHEMA)
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(samples)")}
+        for name, declaration in _ADDED_COLUMNS:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE samples ADD COLUMN {name} {declaration}")
 
 
 def insert_sample(sample: dict) -> None:
@@ -85,7 +105,8 @@ def insert_sample(sample: dict) -> None:
         "ts", "cpu_pct", "ram_pct", "ram_used_bytes", "ram_total_bytes",
         "cpu_temp_c", "gpu_temp_c", "gpu_pct", "vram_pct", "vram_used_mb",
         "vram_total_mb", "net_rx_bps", "net_tx_bps", "net_rx_total",
-        "net_tx_total",
+        "net_tx_total", "disk_read_bps", "disk_write_bps", "disk_read_total",
+        "disk_write_total",
     ]
     placeholders = ",".join("?" for _ in cols)
     with conn:

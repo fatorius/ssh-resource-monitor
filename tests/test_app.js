@@ -122,6 +122,11 @@ check('a plain panel with no data yields an empty series',
     api.linesFor({ lines: [{ key: 'cpu_pct', name: 'CPU', color: '--cpu' }] }, errorPayload)[0].data, []);
 const diskPanel = api.CHART_DEFS.find(d => d.id === 'disk');
 check('the disk panel is pinned to 0-100', diskPanel.fixed, [0, 100]);
+const ioPanel = api.CHART_DEFS.find(d => d.id === 'diskio');
+check('the disk I/O panel reads both directions',
+    ioPanel.lines.map(l => l.key), ['disk_read_bps', 'disk_write_bps']);
+check('disk I/O starts at zero', ioPanel.floor, 0);
+check('disk I/O is formatted as a rate', ioPanel.fmt(1500000), '1.5 MB/s');
 
 print(`\n${failures === 0 ? 'ALL TESTS PASSED' : failures + ' FAILURE(S)'}`);
 if (failures) imports.system.exit(1);

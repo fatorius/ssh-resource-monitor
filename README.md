@@ -19,6 +19,7 @@ dependency is `psutil`.
 | VRAM usage % | `nvidia-smi` (`memory.used` ÷ `memory.total`) |
 | Network throughput | `psutil`, derived from the per-interface counters |
 | Disk usage per filesystem | `statvfs` over the mount table |
+| Disk read/write throughput | `psutil`, derived from `/proc/diskstats` |
 
 The GPU metrics need `nvidia-smi`. Without it the app keeps running and the GPU
 panels simply stay empty.
@@ -30,6 +31,11 @@ Disk reporting covers real filesystems only. Pseudo-filesystems and snap images
 are skipped — a squashfs snap is read-only and therefore permanently 100% full,
 and a host with a few dozen of them would bury its actual disks. A device
 mounted more than once (a bind, a btrfs subvolume) is counted once.
+
+Throughput is summed over whole disks only. The kernel counts a partition's I/O
+against its disk as well, so adding both would double it. Note that reads served
+from the page cache never reach the block device and so do not appear here —
+which is correct, if occasionally surprising.
 
 ## Running it
 
@@ -122,6 +128,7 @@ Everything is an environment variable:
 | `MONITOR_GPU_INDEX` | `0` | Which NVIDIA GPU to monitor |
 | `MONITOR_DISK_ROOT` | empty | Where the host root is mounted; set it in a container |
 | `MONITOR_DISK_MOUNTS` | every real one | Comma-separated mountpoints to report |
+| `MONITOR_DISK_DEVICES` | every whole disk | Comma-separated block devices to sum I/O over |
 
 ## API
 
@@ -160,6 +167,12 @@ watchdog/         restores the container's GPU access after a cgroup reset
 systemd/          unit files: the native service and the watchdog timer
 apt/              apt hook that runs the watchdog after every upgrade
 ```
+
+## Upgrading
+
+`init()` adds any column a newer version introduced to an existing `samples`
+table, so an upgrade keeps the history already collected. Nothing else is
+needed.
 
 ## Storage
 

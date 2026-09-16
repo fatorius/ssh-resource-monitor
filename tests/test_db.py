@@ -32,6 +32,10 @@ def make_sample(ts, **overrides):
         "net_tx_bps": 200.0,
         "net_rx_total": 10_000,
         "net_tx_total": 20_000,
+        "disk_read_bps": 300.0,
+        "disk_write_bps": 400.0,
+        "disk_read_total": 30_000,
+        "disk_write_total": 40_000,
         "disks": {
             "/": {"total_bytes": 200, "used_bytes": 20, "pct": 10.0},
             "/boot/efi": {"total_bytes": 100, "used_bytes": 1, "pct": 1.0},
@@ -138,6 +142,43 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(latest["cpu_core_temps"], {})
 
 
+class MigrationTests(unittest.TestCase):
+    """A database written by an older version must survive an upgrade."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        config.DB_PATH = Path(self._tmp.name) / "old.db"
+        db._local.__dict__.clear()
+
+    def tearDown(self):
+        db._local.__dict__.clear()
+        self._tmp.cleanup()
+
+    def test_columns_added_to_an_existing_table_keep_the_rows(self):
+        # A samples table as it was before disk I/O was collected.
+        conn = db.connect()
+        with conn:
+            conn.execute(
+                "CREATE TABLE samples (ts INTEGER PRIMARY KEY, cpu_pct REAL, ram_pct REAL)"
+            )
+            conn.execute("INSERT INTO samples (ts, cpu_pct) VALUES (1000, 42.0)")
+
+        db.init()
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(samples)")}
+        for name, _ in db._ADDED_COLUMNS:
+            self.assertIn(name, columns)
+        row = conn.execute("SELECT * FROM samples WHERE ts = 1000").fetchone()
+        self.assertEqual(row["cpu_pct"], 42.0)
+        self.assertIsNone(row["disk_read_bps"])
+
+    def test_init_is_idempotent(self):
+        db.init()
+        db.init()  # must not fail trying to add the columns twice
+        db.insert_sample(make_sample(int(time.time())))
+        self.assertIsNotNone(db.latest())
+
+
 class DiskTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -189,9 +230,40 @@ class CollectorTests(unittest.TestCase):
             "ts", "cpu_pct", "ram_pct", "ram_used_bytes", "ram_total_bytes",
             "cpu_temp_c", "cpu_core_temps", "gpu_temp_c", "gpu_pct", "vram_pct",
             "vram_used_mb", "vram_total_mb", "net_rx_bps", "net_tx_bps",
-            "net_rx_total", "net_tx_total", "disks",
+            "net_rx_total", "net_tx_total", "disks", "disk_read_bps",
+            "disk_write_bps", "disk_read_total", "disk_write_total",
         }
         self.assertEqual(expected - set(sample), set())
+
+    def test_whole_disks_exclude_partitions(self):
+        from monitor.collectors import _whole_disks
+
+        # A partition's I/O is counted against its disk too, so summing both
+        # would double it.
+        self.assertEqual(_whole_disks(["sda", "sda1", "sda2"]), ["sda"])
+        self.assertEqual(_whole_disks(["nvme0n1", "nvme0n1p1"]), ["nvme0n1"])
+        self.assertEqual(
+            sorted(_whole_disks(["sda", "sda1", "sdb", "sdb1"])), ["sda", "sdb"]
+        )
+
+    def test_whole_disks_skip_pseudo_devices(self):
+        from monitor.collectors import _whole_disks
+
+        self.assertEqual(_whole_disks(["loop0", "loop1", "ram0", "sr0", "sda"]), ["sda"])
+
+    def test_whole_disks_keep_unrelated_names(self):
+        from monitor.collectors import _whole_disks
+
+        # dm-1 is not a partition of dm-0; neither may be dropped.
+        self.assertEqual(sorted(_whole_disks(["dm-0", "dm-1"])), ["dm-0", "dm-1"])
+        self.assertEqual(_whole_disks([]), [])
+
+    def test_disk_io_totals_match_the_kernel(self):
+        from monitor.collectors import _disk_io_counters
+
+        read, write = _disk_io_counters()
+        self.assertGreaterEqual(read, 0)
+        self.assertGreaterEqual(write, 0)
 
     def test_pseudo_filesystems_are_left_out(self):
         from monitor import collectors
@@ -203,15 +275,18 @@ class CollectorTests(unittest.TestCase):
         for usage in disks.values():
             self.assertGreater(usage["total_bytes"], 0)
 
-    def test_network_rates_are_never_negative(self):
+    def test_rates_are_never_negative_after_a_counter_reset(self):
         from monitor import collectors
 
         sampler = collectors.Sampler()
         # Simulate the interface counters being reset.
         sampler._prev_net = (10**12, 10**12)
+        sampler._prev_disk_io = (10**15, 10**15)
         sample = sampler.sample()
         self.assertGreaterEqual(sample["net_rx_bps"], 0)
         self.assertGreaterEqual(sample["net_tx_bps"], 0)
+        self.assertGreaterEqual(sample["disk_read_bps"], 0)
+        self.assertGreaterEqual(sample["disk_write_bps"], 0)
 
 
 if __name__ == "__main__":
