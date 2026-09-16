@@ -19,6 +19,7 @@ services:
       MONITOR_DB: /data/monitor.db
       MONITOR_INTERVAL: "10"
       MONITOR_RETENTION_DAYS: "14"
+      MONITOR_DISK_ROOT: /host
 
     # Runs as a normal user, not root. Everything the app reads (/proc, /sys,
     # /dev/nvidia*) is world-readable, and the bind-mounted ./data then belongs
@@ -27,6 +28,10 @@ services:
 
     volumes:
       - ./data:/data
+      # Disk usage must be the host's, not the container's own overlay. The
+      # mount is read-only, and since the container runs unprivileged as uid
+      # 1000 it can read no more of the host than that user already could.
+      - /:/host:ro
 
     # The app only reads /proc, /sys and /dev/nvidia*, so it needs no capabilities.
     cap_drop:

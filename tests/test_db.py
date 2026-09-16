@@ -32,6 +32,10 @@ def make_sample(ts, **overrides):
         "net_tx_bps": 200.0,
         "net_rx_total": 10_000,
         "net_tx_total": 20_000,
+        "disks": {
+            "/": {"total_bytes": 200, "used_bytes": 20, "pct": 10.0},
+            "/boot/efi": {"total_bytes": 100, "used_bytes": 1, "pct": 1.0},
+        },
     }
     sample.update(overrides)
     return sample
@@ -134,6 +138,48 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(latest["cpu_core_temps"], {})
 
 
+class DiskTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        config.DB_PATH = Path(self._tmp.name) / "test.db"
+        db._local.__dict__.clear()
+        db.init()
+
+    def tearDown(self):
+        db._local.__dict__.clear()
+        self._tmp.cleanup()
+
+    def test_stores_and_reads_back_each_filesystem(self):
+        now = int(time.time())
+        db.insert_sample(make_sample(now))
+        disks = db.latest()["disks"]
+        self.assertEqual(set(disks), {"/", "/boot/efi"})
+        self.assertEqual(disks["/"]["pct"], 10.0)
+        self.assertEqual(disks["/"]["total_bytes"], 200)
+
+    def test_series_aligns_disks_to_the_time_axis(self):
+        now = int(time.time())
+        for offset in range(0, 60, 10):
+            db.insert_sample(make_sample(now - offset))
+        result = db.series(3600)
+        self.assertEqual(set(result["disks"]), {"/", "/boot/efi"})
+        for values in result["disks"].values():
+            self.assertEqual(len(values), len(result["t"]))
+
+    def test_retention_drops_old_disk_rows(self):
+        now = int(time.time())
+        db.insert_sample(make_sample(now - 40 * 86400))
+        db.insert_sample(make_sample(now))
+        db.prune(14)
+        conn = db.connect()
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM disk_usage").fetchone()[0], 2)
+
+    def test_a_sample_without_disks_is_fine(self):
+        now = int(time.time())
+        db.insert_sample({"ts": now, "cpu_pct": 5.0})
+        self.assertEqual(db.latest()["disks"], {})
+
+
 class CollectorTests(unittest.TestCase):
     def test_a_sample_carries_every_expected_key(self):
         from monitor import collectors
@@ -143,9 +189,19 @@ class CollectorTests(unittest.TestCase):
             "ts", "cpu_pct", "ram_pct", "ram_used_bytes", "ram_total_bytes",
             "cpu_temp_c", "cpu_core_temps", "gpu_temp_c", "gpu_pct", "vram_pct",
             "vram_used_mb", "vram_total_mb", "net_rx_bps", "net_tx_bps",
-            "net_rx_total", "net_tx_total",
+            "net_rx_total", "net_tx_total", "disks",
         }
         self.assertEqual(expected - set(sample), set())
+
+    def test_pseudo_filesystems_are_left_out(self):
+        from monitor import collectors
+
+        disks = collectors.read_disks()
+        # Snap images are read-only squashfs and permanently 100% full; letting
+        # them through would bury the real filesystems.
+        self.assertFalse([m for m in disks if m.startswith("/snap/")])
+        for usage in disks.values():
+            self.assertGreater(usage["total_bytes"], 0)
 
     def test_network_rates_are_never_negative(self):
         from monitor import collectors

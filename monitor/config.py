@@ -34,3 +34,8 @@ NET_IFACES = _csv("MONITOR_NET_IFACES")
 MAX_POINTS = _int("MONITOR_MAX_POINTS", 480)
 #: Index of the NVIDIA GPU being monitored.
 GPU_INDEX = _int("MONITOR_GPU_INDEX", 0)
+#: Prefix the host filesystem is reachable under. Empty when running directly on
+#: the host; in a container, the path the host root is bind-mounted at.
+DISK_ROOT = os.environ.get("MONITOR_DISK_ROOT", "").rstrip("/")
+#: Mountpoints to report; empty means every real filesystem found.
+DISK_MOUNTS = _csv("MONITOR_DISK_MOUNTS")

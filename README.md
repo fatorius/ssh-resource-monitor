@@ -18,12 +18,18 @@ dependency is `psutil`.
 | GPU usage % | `nvidia-smi` (`utilization.gpu`) |
 | VRAM usage % | `nvidia-smi` (`memory.used` ÷ `memory.total`) |
 | Network throughput | `psutil`, derived from the per-interface counters |
+| Disk usage per filesystem | `statvfs` over the mount table |
 
 The GPU metrics need `nvidia-smi`. Without it the app keeps running and the GPU
 panels simply stay empty.
 
 Note that VRAM usage here is memory *occupancy*, not `nvidia-smi`'s
 `utilization.memory`, which reports memory-bandwidth utilisation instead.
+
+Disk reporting covers real filesystems only. Pseudo-filesystems and snap images
+are skipped — a squashfs snap is read-only and therefore permanently 100% full,
+and a host with a few dozen of them would bury its actual disks. A device
+mounted more than once (a bind, a btrfs subvolume) is counted once.
 
 ## Running it
 
@@ -114,6 +120,8 @@ Everything is an environment variable:
 | `MONITOR_NET_IFACES` | every one but `lo` | Comma-separated interfaces to sum |
 | `MONITOR_HWMON` | `/sys/class/hwmon` | Sysfs root for the temperature sensors |
 | `MONITOR_GPU_INDEX` | `0` | Which NVIDIA GPU to monitor |
+| `MONITOR_DISK_ROOT` | empty | Where the host root is mounted; set it in a container |
+| `MONITOR_DISK_MOUNTS` | every real one | Comma-separated mountpoints to report |
 
 ## API
 
@@ -121,7 +129,7 @@ Everything is an environment variable:
 | --- | --- |
 | `GET /` | The HTML dashboard |
 | `GET /api/current` | Latest sample plus host facts |
-| `GET /api/series?range=1h` | Aggregated series. `range`: `15m`, `1h`, `6h`, `24h`, `7d`, `30d` |
+| `GET /api/series?range=1h` | Aggregated series, including one per CPU core and per filesystem. `range`: `15m`, `1h`, `6h`, `24h`, `7d`, `30d` |
 | `GET /api/health` | Health check |
 
 Series are bucket-aggregated inside SQLite, so a 30-day window returns about as

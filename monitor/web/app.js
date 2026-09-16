@@ -58,10 +58,12 @@ const CHART_DEFS = [
   { id: 'net', title: 'Network throughput', fmt: bps, floor: 0,
     lines: [{ key: 'net_rx_bps', name: 'Download', color: '--rx' },
             { key: 'net_tx_bps', name: 'Upload', color: '--tx' }] },
+  { id: 'disk', title: 'Disk usage', fmt: pct, fixed: [0, 100], disks: true, lines: [] },
 ];
 
-/* Per-core line colours, derived from a hue rotation. */
+/* Per-core and per-disk line colours, derived from hue rotations. */
 const coreColor = i => `hsl(${(18 + i * 47) % 360} 78% 62%)`;
+const diskColor = i => `hsl(${(205 + i * 61) % 360} 62% 62%)`;
 
 const state = { range: '1h', series: null, current: null };
 
@@ -249,6 +251,23 @@ function coreLines(data) {
   }));
 }
 
+/** One line per mounted filesystem, built from data.disks. */
+function diskLines(data) {
+  if (!data || !data.disks) return [];
+  return Object.keys(data.disks).sort().map((name, i) => ({
+    key: name, name, color: diskColor(i), data: data.disks[name],
+  }));
+}
+
+/** The lines a panel draws, whichever shape its data takes. */
+function linesFor(def, data) {
+  if (def.cores) return coreLines(data);
+  if (def.disks) return diskLines(data);
+  return def.lines.map(l => ({
+    ...l, data: (data && data.series && data.series[l.key]) || [],
+  }));
+}
+
 /* ---------- indicators ---------- */
 
 function meterColor(value, warn, bad) {
@@ -313,6 +332,17 @@ function renderKPIs(current) {
       sub: `<span style="color:${css('--tx')}">↑</span> ${bps(s.net_tx_bps)} &nbsp;·&nbsp; total ${bytes(s.net_rx_total)} / ${bytes(s.net_tx_total)}`,
     }),
   ];
+
+  // One card per mounted filesystem. The count is whatever the host has, so
+  // these come last and let the grid wrap them.
+  for (const [mount, disk] of Object.entries(s.disks || {})) {
+    cards.push(kpiCard({
+      label: `Disk ${mount}`, color: '--disk', value: pct(disk.pct),
+      sub: `${bytes(disk.used_bytes)} of ${bytes(disk.total_bytes)}`,
+      meter: { pct: disk.pct, color: meterColor(disk.pct, 80, 92) || '--disk' },
+    }));
+  }
+
   box.innerHTML = cards.join('');
 }
 
@@ -330,9 +360,7 @@ function buildChartShells() {
 function renderCharts() {
   const data = state.series;
   for (const def of CHART_DEFS) {
-    const lines = def.cores ? coreLines(data) : def.lines.map(l => ({
-      ...l, data: (data && data.series && data.series[l.key]) || [],
-    }));
+    const lines = linesFor(def, data);
 
     document.getElementById('legend-' + def.id).innerHTML = lines.map(l => {
       const color = l.color.startsWith('--') ? css(l.color) : l.color;

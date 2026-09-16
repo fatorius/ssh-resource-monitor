@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS core_temps (
     temp_c  REAL,
     PRIMARY KEY (ts, core)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS disk_usage (
+    ts          INTEGER NOT NULL,
+    mount       TEXT NOT NULL,
+    total_bytes INTEGER,
+    used_bytes  INTEGER,
+    pct         REAL,
+    PRIMARY KEY (ts, mount)
+) WITHOUT ROWID;
 """
 
 #: Time-series columns exposed by the API, in query order.
@@ -90,6 +99,16 @@ def insert_sample(sample: dict) -> None:
                 "INSERT OR REPLACE INTO core_temps (ts, core, temp_c) VALUES (?,?,?)",
                 [(sample["ts"], name, value) for name, value in cores.items()],
             )
+        disks = sample.get("disks") or {}
+        if disks:
+            conn.executemany(
+                """INSERT OR REPLACE INTO disk_usage
+                   (ts, mount, total_bytes, used_bytes, pct) VALUES (?,?,?,?,?)""",
+                [
+                    (sample["ts"], mount, d["total_bytes"], d["used_bytes"], d["pct"])
+                    for mount, d in disks.items()
+                ],
+            )
 
 
 def latest() -> dict | None:
@@ -103,6 +122,19 @@ def latest() -> dict | None:
         "SELECT core, temp_c FROM core_temps WHERE ts = ? ORDER BY core", (row["ts"],)
     ).fetchall()
     out["cpu_core_temps"] = {c["core"]: c["temp_c"] for c in cores}
+    disks = conn.execute(
+        """SELECT mount, total_bytes, used_bytes, pct FROM disk_usage
+           WHERE ts = ? ORDER BY mount""",
+        (row["ts"],),
+    ).fetchall()
+    out["disks"] = {
+        d["mount"]: {
+            "total_bytes": d["total_bytes"],
+            "used_bytes": d["used_bytes"],
+            "pct": d["pct"],
+        }
+        for d in disks
+    }
     return out
 
 
@@ -145,6 +177,20 @@ def series(span_seconds: int) -> dict:
             continue
         cores.setdefault(r["core"], [None] * len(timestamps))[pos] = r["temp_c"]
 
+    # Disk usage becomes one series per mountpoint, on that same axis.
+    disks: dict[str, list[float | None]] = {}
+    disk_rows = conn.execute(
+        """SELECT (ts / ?) * ? AS b, mount, AVG(pct) AS pct
+           FROM disk_usage WHERE ts >= ?
+           GROUP BY b, mount ORDER BY mount, b""",
+        (bucket, bucket, since),
+    ).fetchall()
+    for r in disk_rows:
+        pos = index.get(r["b"])
+        if pos is None:
+            continue
+        disks.setdefault(r["mount"], [None] * len(timestamps))[pos] = r["pct"]
+
     return {
         "from": since,
         "to": now,
@@ -152,6 +198,7 @@ def series(span_seconds: int) -> dict:
         "t": timestamps,
         "series": data,
         "cores": cores,
+        "disks": disks,
     }
 
 
@@ -164,4 +211,5 @@ def prune(retention_days: int) -> int:
     with conn:
         deleted = conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,)).rowcount
         conn.execute("DELETE FROM core_temps WHERE ts < ?", (cutoff,))
+        conn.execute("DELETE FROM disk_usage WHERE ts < ?", (cutoff,))
     return deleted

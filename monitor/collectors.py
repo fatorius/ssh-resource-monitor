@@ -170,6 +170,7 @@ class Sampler:
             "net_tx_bps": tx_bps,
             "net_rx_total": rx_total,
             "net_tx_total": tx_total,
+            "disks": read_disks(),
             **read_gpu(),
         }
 
@@ -193,3 +194,76 @@ def host_info() -> dict:
         "boot_time": int(psutil.boot_time()),
         "interval": config.INTERVAL,
     }
+
+
+#: Pseudo-filesystems that report sizes but hold no real storage.
+_PSEUDO_FSTYPES = frozenset({
+    "autofs", "binfmt_misc", "bpf", "cgroup", "cgroup2", "configfs", "debugfs",
+    "devpts", "devtmpfs", "efivarfs", "fuse.gvfsd-fuse", "fuse.portal",
+    "fusectl", "hugetlbfs", "mqueue", "nsfs", "overlay", "proc", "pstore",
+    "ramfs", "rpc_pipefs", "securityfs", "squashfs", "sysfs", "tmpfs",
+    "tracefs",
+})
+
+
+def _host_mounts() -> list[tuple[str, str, str]]:
+    """(device, mountpoint, fstype) for the host's filesystems.
+
+    Inside a container the process's own /proc/mounts describes the container,
+    so when a host root is configured we read PID 1's mount table instead —
+    which `pid: host` makes the host's.
+    """
+    source = "/proc/1/mounts" if config.DISK_ROOT else "/proc/self/mounts"
+    try:
+        with open(source) as fh:
+            lines = fh.readlines()
+    except OSError:
+        return [(p.device, p.mountpoint, p.fstype) for p in psutil.disk_partitions(all=False)]
+
+    mounts = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        device, mountpoint, fstype = parts[0], parts[1], parts[2]
+        # Mountpoints are escaped in octal (a space is \040, and so on).
+        mountpoint = mountpoint.encode().decode("unicode_escape")
+        mounts.append((device, mountpoint, fstype))
+    return mounts
+
+
+def read_disks() -> dict[str, dict[str, float]]:
+    """{mountpoint: {total_bytes, used_bytes, pct}} for each real filesystem.
+
+    Snap images and the other pseudo-filesystems are left out: they are either
+    read-only and permanently 100% full, or they hold nothing.
+    """
+    disks: dict[str, dict[str, float]] = {}
+    seen_devices: set[str] = set()
+
+    for device, mountpoint, fstype in sorted(_host_mounts(), key=lambda m: m[1]):
+        if config.DISK_MOUNTS:
+            if mountpoint not in config.DISK_MOUNTS:
+                continue
+        elif fstype in _PSEUDO_FSTYPES or device.startswith("/dev/loop"):
+            continue
+        # The same device mounted twice (a bind, or a btrfs subvolume) is one
+        # pool of storage; the shortest path wins because we walk them sorted.
+        if device in seen_devices:
+            continue
+
+        path = (config.DISK_ROOT + mountpoint) if config.DISK_ROOT else mountpoint
+        try:
+            usage = psutil.disk_usage(path)
+        except (OSError, PermissionError):
+            continue
+        if usage.total <= 0:
+            continue
+
+        seen_devices.add(device)
+        disks[mountpoint] = {
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "pct": usage.percent,
+        }
+    return disks

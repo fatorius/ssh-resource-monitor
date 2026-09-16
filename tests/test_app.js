@@ -37,7 +37,7 @@ const harness = `
     const fetch = () => Promise.reject(new Error('no network in tests'));
     const setInterval = () => 0, setTimeout = () => 0, clearTimeout = () => {};
     ${src}
-    return { scaleFor, bps, bytes, pct, temp, duration, coreLines, tempMeter, drawChart, CHART_DEFS };
+    return { scaleFor, bps, bytes, pct, temp, duration, coreLines, diskLines, linesFor, tempMeter, drawChart, CHART_DEFS };
 `;
 
 const api = new Function(harness)();
@@ -101,6 +101,27 @@ const cl = api.coreLines({ cores: { 'Core 1': [1, 2], 'Core 0': [3, 4] } });
 check('cores come out sorted', cl.map(l => l.name), ['Core 0', 'Core 1']);
 check('each core gets its own colour', cl[0].color !== cl[1].color, true);
 check('no data yields no lines', api.coreLines(null), []);
+
+print('\ndiskLines:');
+const diskData = { disks: { '/boot/efi': [0.6, 0.6], '/': [10.6, 10.7] } };
+const dl = api.diskLines(diskData);
+check('mountpoints come out sorted', dl.map(l => l.name), ['/', '/boot/efi']);
+check('each filesystem gets its own colour', dl[0].color !== dl[1].color, true);
+check('disk colours differ from core colours', dl[0].color !== api.coreLines({ cores: { a: [] } })[0].color, true);
+check('no disks yields no lines', api.diskLines({}), []);
+check('an error payload yields no lines', api.diskLines(errorPayload), []);
+
+print('\nlinesFor:');
+check('a disk panel reads data.disks',
+    api.linesFor({ disks: true, lines: [] }, diskData).map(l => l.name), ['/', '/boot/efi']);
+check('a core panel reads data.cores',
+    api.linesFor({ cores: true, lines: [] }, { cores: { 'Core 0': [1] } }).map(l => l.name), ['Core 0']);
+check('a plain panel reads data.series',
+    api.linesFor({ lines: [{ key: 'cpu_pct', name: 'CPU', color: '--cpu' }] }, { series: { cpu_pct: [5, 6] } })[0].data, [5, 6]);
+check('a plain panel with no data yields an empty series',
+    api.linesFor({ lines: [{ key: 'cpu_pct', name: 'CPU', color: '--cpu' }] }, errorPayload)[0].data, []);
+const diskPanel = api.CHART_DEFS.find(d => d.id === 'disk');
+check('the disk panel is pinned to 0-100', diskPanel.fixed, [0, 100]);
 
 print(`\n${failures === 0 ? 'ALL TESTS PASSED' : failures + ' FAILURE(S)'}`);
 if (failures) imports.system.exit(1);
