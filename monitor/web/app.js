@@ -292,7 +292,9 @@ function renderKPIs(current) {
     }),
     kpiCard({
       label: 'GPU', color: '--gpu', value: pct(s.gpu_pct),
-      sub: current.host.gpu_name || 'GPU unavailable',
+      // The GPU name is read once at startup and cached, so it outlives a loss
+      // of readings; say so plainly instead of implying the GPU is being read.
+      sub: s.gpu_pct == null ? 'no reading from nvidia-smi' : (current.host.gpu_name || 'GPU'),
       meter: { pct: s.gpu_pct, color: meterColor(s.gpu_pct, 80, 95) || '--gpu' },
     }),
     kpiCard({

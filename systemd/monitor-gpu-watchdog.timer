@@ -1,0 +1,12 @@
+# Catches device-cgroup resets that do not come from a package upgrade; the apt
+# hook handles that far more common case immediately.
+[Unit]
+Description=Check the monitor container's GPU access every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

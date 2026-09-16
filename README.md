@@ -56,6 +56,33 @@ from the host rather than from inside the container. GPU metrics additionally
 need the [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-container-toolkit);
 without it, comment out the `deploy:` block in `docker-compose.yml`.
 
+#### Keeping GPU access alive
+
+On a host using cgroup v2, `systemctl daemon-reload` — which **any** package
+upgrade triggers, including an unattended one — resets the device cgroup of an
+already-running container. `nvidia-smi` inside it then fails with
+`Failed to initialize NVML: Unknown Error` while the host keeps reading the GPU
+normally, and the container cannot notice or recover on its own. The GPU panels
+simply go blank until someone restarts it.
+
+`watchdog/monitor-gpu-watchdog` closes that hole. It tests actual GPU access
+from inside the container and restarts it only when access was lost but the host
+can still see the GPU, so a genuinely absent or broken GPU never sends it into a
+restart loop. Two triggers share the one script: an apt hook, which catches the
+common cause within seconds of the upgrade, and a one-minute timer for
+device-cgroup resets from anywhere else.
+
+```bash
+sudo install -m 755 watchdog/monitor-gpu-watchdog /usr/local/bin/
+sudo install -m 644 systemd/monitor-gpu-watchdog.{service,timer} /etc/systemd/system/
+sudo install -m 644 apt/99-ssh-resource-monitor /etc/apt/apt.conf.d/
+sudo systemctl daemon-reload && sudo systemctl enable --now monitor-gpu-watchdog.timer
+```
+
+Recovery costs one missed sample: measured at 12 seconds from restart to the
+first GPU reading. Running natively under systemd avoids the problem entirely,
+since `nvidia-smi` is then an ordinary host process.
+
 ### Natively, under systemd
 
 ```bash
@@ -121,6 +148,9 @@ monitor/
   __main__.py     collector thread + server
   web/            dashboard (HTML, CSS, JS)
 tests/            Python and JavaScript tests
+watchdog/         restores the container's GPU access after a cgroup reset
+systemd/          unit files: the native service and the watchdog timer
+apt/              apt hook that runs the watchdog after every upgrade
 ```
 
 ## Storage

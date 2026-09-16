@@ -1,0 +1,9 @@
+# Safety net for the GPU device-cgroup reset. See watchdog/monitor-gpu-watchdog.
+[Unit]
+Description=Restore the monitor container's access to the NVIDIA devices
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/monitor-gpu-watchdog

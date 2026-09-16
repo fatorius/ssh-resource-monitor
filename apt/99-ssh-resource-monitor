@@ -1,0 +1,5 @@
+// Package upgrades run `systemctl daemon-reload`, which revokes a running
+// container's access to the NVIDIA devices. Check as soon as dpkg is done: the
+// watchdog restarts the container only if access was actually lost, so this
+// costs nothing on the overwhelming majority of upgrades.
+DPkg::Post-Invoke { "if [ -x /usr/local/bin/monitor-gpu-watchdog ]; then /usr/local/bin/monitor-gpu-watchdog || true; fi"; };

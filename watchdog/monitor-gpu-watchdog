@@ -1,0 +1,50 @@
+#!/bin/sh
+# Restores the container's access to the NVIDIA devices after it is revoked.
+#
+# A `systemctl daemon-reload` -- which any package upgrade triggers -- resets the
+# device cgroup of an already-running container. nvidia-smi inside it then fails
+# with "Failed to initialize NVML: Unknown Error" while the host keeps reading the
+# GPU perfectly well, and the container has no way to notice or recover on its
+# own. Restarting it recreates the cgroup and restores access, at the cost of one
+# missed sample.
+#
+# Safe to run at any time: it tests actual GPU access and does nothing when
+# everything is healthy.
+set -eu
+
+CONTAINER="${MONITOR_CONTAINER:-ssh-resource-monitor}"
+COOLDOWN="${MONITOR_WATCHDOG_COOLDOWN:-300}"
+STAMP="/run/${CONTAINER}-watchdog.stamp"
+
+# A container that is not running was stopped deliberately. Leave it that way.
+docker ps --filter "name=^/${CONTAINER}$" --filter status=running --quiet \
+    | grep -q . || exit 0
+
+# Healthy inside the container: nothing to do. This is the usual path.
+if docker exec "$CONTAINER" nvidia-smi -L >/dev/null 2>&1; then
+    exit 0
+fi
+
+# The host must still see the GPU. If it does not, the fault lies with the driver
+# or the hardware, and restarting the container would only loop pointlessly.
+if ! nvidia-smi -L >/dev/null 2>&1; then
+    echo "GPU unreadable on the host as well; leaving $CONTAINER alone"
+    exit 0
+fi
+
+now=$(date +%s)
+if [ -f "$STAMP" ]; then
+    last=$(cat "$STAMP" 2>/dev/null || echo 0)
+    elapsed=$((now - last))
+    if [ "$elapsed" -lt "$COOLDOWN" ]; then
+        echo "restarted ${elapsed}s ago, inside the ${COOLDOWN}s cooldown; not restarting again"
+        exit 0
+    fi
+fi
+# The cooldown is a safeguard, not a correctness requirement: if the stamp cannot
+# be written (running unprivileged, say), carry on and restart anyway.
+{ echo "$now" > "$STAMP"; } 2>/dev/null || true
+
+echo "$CONTAINER lost access to the NVIDIA devices; restarting it"
+docker restart "$CONTAINER" >/dev/null
+echo "restarted"
